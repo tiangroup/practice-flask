@@ -7,28 +7,35 @@ on:
       - main
 
 jobs:
-  deploy:
-    name: Deploy to Server
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Copy via rsync
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ vars.SERVER_HOST }} >> ~/.ssh/known_hosts
-          rsync -av --delete --exclude=".env" --exclude=".git/" --exclude=".github/" ./ ${{ vars.SERVER_USER }}@${{ vars.SERVER_HOST }}:~/stacks/python/app/
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Docker build
+      - name: Build Docker image
+        run: |
+          IMAGE_ID=ghcr.io/${{ github.repository_owner }}/practice-flask
+          docker build -t $IMAGE_ID:latest .
+
+      - name: Push Docker image to GHCR
+        run: |
+          IMAGE_ID=ghcr.io/${{ github.repository_owner }}/practice-flask
+          docker push $IMAGE_ID:latest
+
+      - name: SSH and deploy on server
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ vars.SERVER_HOST }}
-          username: ${{ vars.SERVER_USER }}
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ghcr.io/${{ github.repository_owner }}/practice-flask:latest
             cd ~/stacks/python
-            docker compose up --build -d
+            docker compose down
+            docker compose up -d
